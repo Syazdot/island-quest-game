@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Island Quest — Misi Ilmu</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&display=swap');
+  *{box-sizing:border-box} body{margin:0;background:#101b3b;color:#fff;font-family:'Baloo 2',system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;padding:18px}
+  .game-shell{width:min(100%,1000px);background:#182b58;border:4px solid #4566a8;border-radius:24px;overflow:hidden;box-shadow:0 18px 50px #0008}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;background:#213c75}
+  h1{font-size:clamp(20px,4vw,30px);margin:0;color:#ffe66d;text-shadow:2px 3px #a34e54}
+  .stats{display:flex;gap:8px;flex-wrap:wrap}.pill{background:#12254d;border:2px solid #5578bd;border-radius:999px;padding:5px 12px;font-weight:800}
+  #stage{position:relative;background:linear-gradient(#65d9f2 0%,#9cecff 55%,#e4fbff 100%);height:520px;overflow:hidden}
+  canvas{width:100%;height:100%;display:block}
+  .overlay{position:absolute;inset:0;display:grid;place-items:center;background:#0c1c3dbb;padding:18px}
+  .panel{max-width:520px;width:100%;background:#fff;color:#20315c;border:5px solid #ffd95a;border-radius:24px;padding:22px;text-align:center;box-shadow:0 12px 0 #b77738}
+  .panel h2{margin:0 0 6px;font-size:30px;color:#e45e62}.panel p{font-size:17px;margin:8px 0 16px}
+  button{font:800 17px 'Baloo 2',sans-serif;border:0;border-radius:14px;padding:10px 18px;background:#ffca45;color:#533a21;cursor:pointer;box-shadow:0 4px 0 #c58a2c;transition:transform .1s}
+  button:hover{transform:translateY(-2px)}button:active{transform:translateY(2px);box-shadow:none}
+  .controls{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:#213c75;gap:10px;flex-wrap:wrap}
+  .hint{font-size:14px;color:#dceaff}.right-controls{display:flex;gap:8px}
+  #quiz{position:absolute;inset:0;display:none;place-items:center;background:#10234dcc;padding:16px}
+  .quiz-card{width:min(100%,490px);background:#fff;color:#26365e;border-radius:22px;padding:22px;border:5px solid #ffe16b;text-align:center}
+  .quiz-card h2{margin:0;color:#e45e62}.question{font-size:23px;font-weight:800;margin:14px 0}
+  .answers{display:grid;grid-template-columns:1fr 1fr;gap:10px}.answers button{background:#72d8ce;color:#163c51;box-shadow:0 4px #369c96}.answers button.wrong{background:#ff9b9b;box-shadow:0 4px #d75a69}
+  #feedback{min-height:28px;font-weight:800;margin:12px 0 0}
+  @media(max-width:600px){#stage{height:430px}.pill{font-size:13px;padding:3px 8px}.hint{font-size:12px}}
+</style>
+</head>
+<body>
+<div class="game-shell">
+  <header><h1>🏝️ ISLAND QUEST</h1><div class="stats"><span class="pill">⭐ <b id="score">0</b></span><span class="pill">❤️ <b id="lives">3</b></span><span class="pill">🏁 Pulau <b id="island">1</b>/3</span></div></header>
+  <div id="stage">
+    <canvas id="game" width="1000" height="520" aria-label="Permainan platform pulau"></canvas>
+    <div id="quiz"><div class="quiz-card"><h2>🧠 Cabaran Ilmu!</h2><div class="question" id="question">Soalan</div><div class="answers" id="answers"></div><div id="feedback"></div></div></div>
+    <div class="overlay" id="start">
+      <div class="panel"><h2>Selamat datang, Explorer!</h2><p>Teroka 3 pulau terapung, lompat atas platform dan elakkan lava. Jawab soalan Matematik untuk membuka portal ke pulau seterusnya!</p><p><b>Gerak:</b> ← → atau A / D &nbsp; <b>Lompat:</b> Space / ↑ / W</p><button id="startBtn">MULA BERMAIN 🚀</button></div>
+    </div>
+    <div class="overlay" id="end" style="display:none"><div class="panel"><h2 id="endTitle">Misi selesai!</h2><p id="endText"></p><button id="againBtn">MAIN LAGI 🔁</button></div></div>
+  </div>
+  <div class="controls"><div class="hint">⌨️ ← → / A D untuk bergerak · SPACE / ↑ untuk lompat · Kumpul ⭐ dan jawab soalan!</div><div class="right-controls"><button id="musicBtn">♫ Muzik: ON</button><button id="soundBtn">🔊 Bunyi: ON</button></div></div>
+</div>
+<script>
+(() => {
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+const $=id=>document.getElementById(id);
+let running=false,paused=false,score=0,lives=3,island=1,keys={},frame=0,questionOpen=false,mutedMusic=false,mutedSfx=false,audio=null,musicTimer=null;
+const W=1000,H=520,groundY=430;
+let player,platforms,coins,lava,portal,camera=0,quizIndex=0;
+const questions=[
+ {q:'Berapakah 8 × 7?',a:['54','56','64','48'],c:1,why:'8 darab 7 = 56.'},
+ {q:'Planet yang dikenali sebagai Planet Merah ialah…',a:['Bumi','Zuhal','Marikh','Musytari'],c:2,why:'Marikh kelihatan kemerahan kerana permukaannya kaya dengan besi oksida.'},
+ {q:'Berapakah 3/4 dalam bentuk perpuluhan?',a:['0.25','0.5','0.75','1.25'],c:2,why:'3 dibahagi 4 bersamaan 0.75.'},
+ {q:'Haiwan manakah mamalia?',a:['Jerung','Paus','Sotong','Buaya'],c:1,why:'Paus bernafas menggunakan paru-paru dan menyusukan anak.'},
+ {q:'Apakah hasil 125 + 275?',a:['300','350','400','425'],c:2,why:'125 + 275 = 400.'},
+ {q:'Air membeku pada suhu…',a:['0°C','10°C','50°C','100°C'],c:0,why:'Pada tekanan atmosfera biasa, air membeku pada 0°C.'},
+ {q:'Berapakah 9²?',a:['18','72','81','99'],c:2,why:'9 kuasa dua ialah 9 × 9 = 81.'},
+ {q:'Tumbuhan menghasilkan makanan melalui…',a:['Fotosintesis','Penyejatan','Pencernaan','Respirasi sahaja'],c:0,why:'Fotosintesis menggunakan cahaya untuk menghasilkan glukosa.'}
+];
+function audioInit(){if(!audio)audio=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')audio.resume();}
+function tone(freq,dur=0.12,type='sine',vol=.06,when=0){if(mutedSfx)return;audioInit();let o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(vol,audio.currentTime+when);g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+when+dur);o.connect(g);g.connect(audio.destination);o.start(audio.currentTime+when);o.stop(audio.currentTime+when+dur);}
+function sfx(kind){if(kind==='jump'){tone(390,.1,'square');tone(580,.12,'square',.045,.07)}if(kind==='coin'){tone(740,.1);tone(990,.16,'sine',.05,.08)}if(kind==='correct'){tone(523,.12);tone(659,.12,'sine',.05,.12);tone(784,.2,'sine',.05,.24)}if(kind==='wrong'){tone(180,.25,'sawtooth',.06)}if(kind==='hurt'){tone(120,.35,'sawtooth',.07)}}
+function startMusic(){if(mutedMusic||musicTimer)return;audioInit();let notes=[261.6,329.6,392,329.6,293.7,349.2,440,349.2],i=0;musicTimer=setInterval(()=>{if(!running||mutedMusic)return;let f=notes[i++%notes.length];let o=audio.createOscillator(),g=audio.createGain();o.type='triangle';o.frequency.value=f;g.gain.value=.025;g.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.32);o.connect(g);g.connect(audio.destination);o.start();o.stop(audio.currentTime+.33)},360);}
+function stopMusic(){clearInterval(musicTimer);musicTimer=null}
+function buildIsland(n){
+ island=n;camera=0;
+ const base= n===1?0:n===2?0:0;
+ platforms=[
+  {x:0,y:430,w:270,h:90},{x:330,y:380,w:140,h:22},{x:535,y:320,w:140,h:22},
+  {x:740,y:370,w:120,h:22},{x:920,y:430,w:260,h:90},{x:1190,y:360,w:130,h:22},
+  {x:1400,y:300,w:140,h:22},{x:1610,y:390,w:200,h:90}
+ ];
+ if(n===2){platforms[1].y=350;platforms[2].y=285;platforms[3].y=340;platforms[5].y=320;platforms[6].y=260;}
+ if(n===3){platforms[1].y=330;platforms[2].y=260;platforms[3].y=320;platforms[5].y=300;platforms[6].y=235;}
+ lava=[{x:270,y:455,w:650,h:80},{x:1180,y:455,w:430,h:80}];
+ coins=[{x:390,y:335,taken:false},{x:590,y:275,taken:false},{x:790,y:325,taken:false},{x:1240,y:315,taken:false},{x:1450,y:255,taken:false}];
+ portal={x:1690,y:320,w:55,h:70};
+ player={x:65,y:365,w:34,h:48,vx:0,vy:0,onGround:false,invul:0};
+ $('island').textContent=n;
+}
+function reset(){score=0;lives=3;buildIsland(1);$('score').textContent=score;$('lives').textContent=lives;$('end').style.display='none';$('start').style.display='grid';$('quiz').style.display='none';running=false;questionOpen=false;stopMusic();draw();}
+function drawBackground(){
+ let g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#55c9ed');g.addColorStop(1,'#d8f7ff');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // sun and clouds
+ ctx.fillStyle='#ffe77a';ctx.beginPath();ctx.arc(835,85,42,0,Math.PI*2);ctx.fill();
+ for(let i=0;i<6;i++){let x=((i*210-frame*.25)%1200+1200)%1200-100;let y=65+(i%3)*45;ctx.fillStyle='#ffffffcc';ctx.beginPath();ctx.arc(x,y,22,0,7);ctx.arc(x+25,y-10,28,0,7);ctx.arc(x+52,y,21,0,7);ctx.fill();}
+ // distant islands
+ for(let i=0;i<5;i++){let x=i*260-((frame*.45)%260);ctx.fillStyle='#55bba5';ctx.beginPath();ctx.moveTo(x,420);ctx.lineTo(x+75,365);ctx.lineTo(x+160,420);ctx.fill();}
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);drawBackground();
+ ctx.save();ctx.translate(-camera,0);
+ // lava
+ lava.forEach(l=>{ctx.fillStyle='#ff6b35';ctx.fillRect(l.x,l.y,l.w,l.h);for(let i=0;i<l.w;i+=38){ctx.fillStyle=i%2?'#ffb02e':'#ffdf54';ctx.beginPath();ctx.arc(l.x+i+Math.sin(frame*.08+i)*8,l.y+4,13,Math.PI,0);ctx.fill();}});
+ // platforms
+ platforms.forEach((p,i)=>{ctx.fillStyle='#8b5a3c';ctx.fillRect(p.x,p.y,p.w,p.h);ctx.fillStyle='#50c878';ctx.fillRect(p.x,p.y,p.w,10);ctx.fillStyle='#b77a4f';for(let x=p.x+12;x<p.x+p.w-8;x+=32){ctx.fillRect(x,p.y+23,12,7);}});
+ // coins
+ coins.forEach(c=>{if(c.taken)return;ctx.fillStyle='#ffdf3e';ctx.beginPath();ctx.ellipse(c.x,c.y+Math.sin(frame*.1+c.x)*4,10,14,0,0,7);ctx.fill();ctx.strokeStyle='#fff5a5';ctx.lineWidth=3;ctx.stroke();});
+ // portal
+ ctx.fillStyle='#a45bff';ctx.beginPath();ctx.ellipse(portal.x+27,portal.y+34,28,37,0,0,7);ctx.fill();ctx.fillStyle='#6df5ff';ctx.beginPath();ctx.ellipse(portal.x+27,portal.y+34,17,27,0,0,7);ctx.fill();
+ // player block character
+ let p=player;ctx.fillStyle=p.invul>0&&Math.floor(frame/5)%2?'#ffffff':'#ff6b88';ctx.fillRect(p.x,p.y,p.w,p.h);
+ ctx.fillStyle='#ffe0b5';ctx.fillRect(p.x+5,p.y+5,24,19);ctx.fillStyle='#25385e';ctx.fillRect(p.x+10,p.y+12,4,5);ctx.fillRect(p.x+22,p.y+12,4,5);
+ ctx.fillStyle='#344b86';ctx.fillRect(p.x+3,p.y+34,12,14);ctx.fillRect(p.x+20,p.y+34,12,14);
+ ctx.fillStyle='#fff';ctx.fillRect(p.x+7,p.y+29,20,4);
+ ctx.restore();
+ // island number banner
+ ctx.fillStyle='#19396caa';ctx.fillRect(15,14,190,38);ctx.fillStyle='white';ctx.font='bold 20px Baloo 2';ctx.fillText(['🌴 Pulau Tropika','🌋 Pulau Lava','💎 Pulau Kristal'][island-1],27,40);
+}
+function overlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function update(){
+ if(!running||questionOpen)return;frame++;
+ const p=player;let left=keys.ArrowLeft||keys.a||keys.A,right=keys.ArrowRight||keys.d||keys.D,jump=keys[' ']||keys.ArrowUp||keys.w||keys.W;
+ p.vx=left?-4.2:right?4.2:0;p.x+=p.vx;p.x=Math.max(0,Math.min(1780,p.x));
+ if(jump&&p.onGround){p.vy=-12.5;p.onGround=false;sfx('jump')}
+ p.vy+=.58;p.y+=p.vy;p.onGround=false;
+ for(const pl of platforms){if(p.vy>=0&&p.x+p.w>pl.x&&p.x<pl.x+pl.w&&p.y+p.h>=pl.y&&p.y+p.h-p.vy<=pl.y+8){p.y=pl.y-p.h;p.vy=0;p.onGround=true;}}
+ if(p.invul>0)p.invul--;
+ for(const c of coins){if(!c.taken&&overlap(p,{x:c.x-10,y:c.y-13,w:20,h:26})){c.taken=true;score+=10;$('score').textContent=score;sfx('coin')}}
+ if(lava.some(l=>overlap(p,l))||p.y>H+40){hurt()}
+ if(overlap(p,portal)){openQuestion()}
+ camera=Math.max(0,Math.min(800,p.x-360));
+}
+function hurt(){if(player.invul>0)return;lives--;$('lives').textContent=lives;sfx('hurt');if(lives<=0){finish(false);return;}player.x=65;player.y=350;player.vy=0;player.invul=100;}
+function openQuestion(){if(questionOpen)return;questionOpen=true;const q=questions[(island-1)*2+(quizIndex++%2)];$('question').textContent=q.q;$('feedback').textContent='';$('answers').innerHTML='';q.a.forEach((a,i)=>{let b=document.createElement('button');b.textContent=a;b.onclick=()=>{if(i===q.c){$('feedback').textContent='Betul! '+q.why;$('feedback').style.color='#169b68';score+=30;$('score').textContent=score;sfx('correct');setTimeout(()=>{ $('quiz').style.display='none';questionOpen=false;if(island===3)finish(true);else{buildIsland(island+1);}},1300);}else{$('feedback').textContent='Belum tepat. Cuba lagi!';$('feedback').style.color='#d84b55';b.classList.add('wrong');sfx('wrong');}};$('answers').appendChild(b);});$('quiz').style.display='grid';}
+function finish(win){running=false;stopMusic();$('endTitle').textContent=win?'🏆 Hebat, Explorer!':'💥 Cuba lagi!';$('endText').textContent=win?`Kamu berjaya menakluki semua pulau! Skor akhir: ${score} mata.`:`Nyawa kamu sudah habis. Skor: ${score} mata. Jangan putus asa!`;$('end').style.display='grid';}
+function loop(){update();draw();requestAnimationFrame(loop)}
+$('startBtn').onclick=()=>{audioInit();$('start').style.display='none';running=true;startMusic();};
+$('againBtn').onclick=reset;
+$('musicBtn').onclick=()=>{mutedMusic=!mutedMusic;$('musicBtn').textContent=mutedMusic?'♫ Muzik: OFF':'♫ Muzik: ON';if(mutedMusic)stopMusic();else if(running)startMusic();};
+$('soundBtn').onclick=()=>{mutedSfx=!mutedSfx;$('soundBtn').textContent=mutedSfx?'🔇 Bunyi: OFF':'🔊 Bunyi: ON';};
+window.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp',' '].includes(e.key))e.preventDefault();keys[e.key]=true;});
+window.addEventListener('keyup',e=>keys[e.key]=false);
+buildIsland(1);draw();loop();
+})();
+</script>
+</body>
+</html>
